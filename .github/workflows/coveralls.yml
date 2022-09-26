@@ -1,35 +1,69 @@
-name: "ruby on rails"
+name: CI
+
 on:
   push:
-    branches: [ "main", "dev" ]
+    branches: [master]
   pull_request:
-    branches: [ "main", "dev" ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
 jobs:
-  test:
-    runs-on: ubuntu-latest
+  rspec:
+    name: Ruby ${{ matrix.ruby }} / PostgreSQL ${{ matrix.postgres }} / ${{ matrix.gemfile || 'Gemfile' }}
+    runs-on: ubuntu-20.04
+
+    permissions:
+      checks: write # for coverallsapp/github-action to create new checks
+      
     env:
       RAILS_ENV: test
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-      # Add or replace dependency steps here
-      - name: Ruby and Gems install
-        uses: ruby/setup-ruby@0a29871fe2b0200a17a4497bae54fe5df0d973aa # v1.115.3
-        with:
-          bundler-cache: true
-      # Add or replace test runners here
-      - name: Run Tests
-        run: bundle exec rake
-  
-      - name: Test & publish code coverage
-        uses: paambaati/codeclimate-action@v3.0.0
-        env:
-          CC_TEST_REPORTER_ID: f3db11147c6cfdfc61faca0632f7c1c17202169eb096a171fe437a88432fc22e
-        with:
-          coverageCommand: bundle exec rake
-          debug: true
 
-      - name: Coveralls
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+      with:
+        submodules: true
+        fetch-depth: 0
+
+    - name: Install packages
+      env:
+        DEBIAN_FRONTEND: noninteractive
+      run: |
+        sudo apt-get -y update
+        sudo apt-get -y install exim4-daemon-light
+        sudo apt-get -y install `cut -d " " -f 1 config/packages.ubuntu-focal | egrep -v "(^#|wkhtml|bundler|^ruby|^rake)"`
+        
+    - name: Install Ruby ${{ matrix.ruby }}
+      uses: ruby/setup-ruby@v1
+      with:
+        ruby-version: ${{ matrix.ruby }}
+        bundler-cache: true
+
+    - name: Run tests
+      run: |
+        bundle exec rspec --format Fivemat
+    - name: Coveralls Parallel
+      uses: coverallsapp/github-action@master
+      continue-on-error: true
+      with:
+        github-token: ${{ secrets.github_token }}
+        flag-name: run-${{ matrix.ruby }}-${{ matrix.gemfile || 'Gemfile' }}
+        parallel: true
+
+  coveralls:
+    permissions:
+      checks: write
+    name: Coveralls
+    needs: rspec
+    runs-on: ubuntu-20.04
+    steps:
+      - name: Coveralls Finished
         uses: coverallsapp/github-action@master
-        with:          
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          github-token: ${{ secrets.github_token }}
+          parallel-finished: true
